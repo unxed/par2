@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/unxed/par2/gf16"
 )
 
 func TestPAR2_FullRoundtrip(t *testing.T) {
@@ -109,5 +111,76 @@ func TestPAR2_FullRoundtrip(t *testing.T) {
 		t.Error("expected RepairFile to fail when corrupted blocks count exceeds recovery blocks count, but it succeeded")
 	} else if !strings.Contains(err.Error(), "not enough recovery slices") {
 		t.Errorf("expected 'not enough recovery slices' error, got: %v", err)
+	}
+}
+
+func TestGF16_MatrixSingular(t *testing.T) {
+	// Матрица, заполненная нулями, является вырожденной (singular) и не имеет обратной.
+	// Решатель должен вернуть ошибку.
+	m := gf16.NewMatrix(2, 2)
+	b := []uint16{1, 2}
+
+	if err := m.Solve(b); err == nil {
+		t.Error("expected error when solving singular matrix, got nil")
+	}
+}
+
+func TestPAR2_TinyFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "tiny.bin")
+
+	// Файл размером всего 1 байт
+	if err := os.WriteFile(filePath, []byte("A"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	parBytes, err := GeneratePAR2Data(filePath, 10)
+	if err != nil {
+		t.Fatalf("failed to generate PAR2 for 1-byte file: %v", err)
+	}
+
+	mainPkt, desc, ifsc, _, err := ParsePackets(parBytes)
+	if err != nil {
+		t.Fatalf("failed to parse packets for tiny file: %v", err)
+	}
+
+	if mainPkt.SliceSize != 16*1024 {
+		t.Errorf("expected minimum slice size 16KB, got %d", mainPkt.SliceSize)
+	}
+	if len(ifsc.Checksums) != 1 {
+		t.Errorf("expected 1 checksum block, got %d", len(ifsc.Checksums))
+	}
+	if desc.Length != 1 {
+		t.Errorf("expected file length 1, got %d", desc.Length)
+	}
+}
+
+func TestPAR2_CorruptPacketsTolerance(t *testing.T) {
+	// 1. Тестируем поведение при обрыве потока посреди заголовка пакета
+	truncatedData := []byte("PAR 2\x00PK") // Оборванный заголовок (меньше 64 байт)
+	_, _, _, _, err := ParsePackets(truncatedData)
+	if err == nil {
+		t.Error("expected error when parsing truncated packet headers, got nil")
+	}
+
+	// 2. Тестируем поведение при повреждении тела пакета
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "dummy.bin")
+	os.WriteFile(filePath, []byte("some dummy data for hashing"), 0644)
+
+	parBytes, _ := GeneratePAR2Data(filePath, 10)
+
+	// Намеренно портим один байт в теле первого пакета (на смещении 80, тело первого пакета занимает 64-95)
+	corruptedBytes := make([]byte, len(parBytes))
+	copy(corruptedBytes, parBytes)
+	if len(corruptedBytes) > 80 {
+		corruptedBytes[80] ^= 0xFF // Инвертируем биты строго в теле пакета
+	}
+
+	// Парсер не должен возвращать ошибку или паниковать,
+	// он должен тихо отбросить поврежденный пакет по несовпадению MD5-хэша и продолжить работу.
+	_, _, _, _, err = ParsePackets(corruptedBytes)
+	if err != nil {
+		t.Fatalf("ParsePackets failed to skip corrupted packet: %v", err)
 	}
 }
