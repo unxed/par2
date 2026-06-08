@@ -89,7 +89,30 @@ func ParsePackets(data []byte) (*MainPacket, *FileDescPacket, *IFSCPacket, []*Re
 	return mainPkt, fileDesc, ifsc, recvSlices, nil
 }
 
+// RepairTarget абстрагирует физический файл (или несколько файлов многотомного архива)
+// для выполнения операций чтения и записи блоков восстановления на месте.
+type RepairTarget interface {
+	io.ReaderAt
+	io.WriterAt
+}
+
 func RepairFile(targetFile string, par2Data []byte) error {
+	f, err := os.OpenFile(targetFile, os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if err := RepairTargetData(f, par2Data); err != nil {
+		return err
+	}
+
+	_, fileDesc, _, _, _ := ParsePackets(par2Data)
+	return f.Truncate(int64(fileDesc.Length))
+}
+
+// RepairTargetData выполняет In-Place восстановление Рида-Соломона над абстрактной мишенью
+func RepairTargetData(target RepairTarget, par2Data []byte) error {
 	mainPkt, fileDesc, ifsc, recvSlices, err := ParsePackets(par2Data)
 	if err != nil {
 		return err
@@ -97,12 +120,6 @@ func RepairFile(targetFile string, par2Data []byte) error {
 	if ifsc == nil || mainPkt == nil || fileDesc == nil {
 		return fmt.Errorf("missing critical metadata packets (IFSC/Main/FileDesc)")
 	}
-
-	f, err := os.OpenFile(targetFile, os.O_RDWR, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
 
 	sliceSize := mainPkt.SliceSize
 	numSlices := len(ifsc.Checksums)
@@ -112,7 +129,7 @@ func RepairFile(targetFile string, par2Data []byte) error {
 
 	for i := 0; i < numSlices; i++ {
 		buf := make([]byte, sliceSize)
-		n, _ := f.ReadAt(buf, int64(i)*int64(sliceSize))
+		n, _ := target.ReadAt(buf, int64(i)*int64(sliceSize))
 		_ = n
 
 		actualMD5 := md5.Sum(buf)
@@ -187,16 +204,9 @@ func RepairFile(targetFile string, par2Data []byte) error {
 	// 5. Записываем восстановленные блоки обратно в файл на диске
 	for q := 0; q < k; q++ {
 		idxMissing := missingSlices[q]
-		if _, err := f.WriteAt(bVectors[q], int64(idxMissing)*int64(sliceSize)); err != nil {
+		if _, err := target.WriteAt(bVectors[q], int64(idxMissing)*int64(sliceSize)); err != nil {
 			return fmt.Errorf("failed to write repaired block %d back to disk: %w", idxMissing, err)
 		}
-	}
-
-	// 6. Устранение Zero-Padding Bloat:
-	// Обрезаем файл до исходного байтового размера, указанного в метаданных,
-	// чтобы исключить раздувание файла из-за нулевого выравнивания последнего блока.
-	if err := f.Truncate(int64(fileDesc.Length)); err != nil {
-		return fmt.Errorf("failed to truncate repaired file back to original length: %w", err)
 	}
 
 	return nil

@@ -25,10 +25,6 @@ func addMulBlock(dst, src []byte, factor uint16) {
 }
 
 func GeneratePAR2Data(filename string, percentage int) ([]byte, error) {
-	if percentage <= 0 {
-		return nil, nil
-	}
-
 	f, err := os.Open(filename)
 	if err != nil {
 		return nil, err
@@ -39,7 +35,14 @@ func GeneratePAR2Data(filename string, percentage int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	fileLen := fi.Size()
+	return GeneratePAR2Stream(f, fi.Size(), filepath.Base(filename), percentage)
+}
+
+// GeneratePAR2Stream генерирует пакеты восстановления, читая данные из абстрактного потока
+func GeneratePAR2Stream(r io.Reader, fileLen int64, baseName string, percentage int) ([]byte, error) {
+	if percentage <= 0 {
+		return nil, nil
+	}
 
 	var sliceSize uint64 = 256 * 1024
 	if fileLen < int64(sliceSize) {
@@ -55,7 +58,7 @@ func GeneratePAR2Data(filename string, percentage int) ([]byte, error) {
 
 	for i := int64(0); i < numSlices; i++ {
 		buf := make([]byte, sliceSize)
-		n, _ := io.ReadFull(f, buf)
+		n, _ := io.ReadFull(r, buf)
 		if n > 0 {
 			slices[i] = buf
 			fullHasher.Write(buf[:n])
@@ -82,7 +85,7 @@ func GeneratePAR2Data(filename string, percentage int) ([]byte, error) {
 	copy(fileHash[:], fullHasher.Sum(nil))
 	copy(hash16k[:], hash16kHasher.Sum(nil))
 
-	rawName := []byte(filepath.Base(filename))
+	rawName := []byte(baseName)
 	padding := (4 - (len(rawName) % 4)) % 4
 
 	descBuf := new(bytes.Buffer)
@@ -135,7 +138,7 @@ func GeneratePAR2Data(filename string, percentage int) ([]byte, error) {
 		FileHash: fileHash,
 		Hash16k:  hash16k,
 		Length:   uint64(fileLen),
-		Name:     filepath.Base(filename),
+		Name:     baseName,
 	}
 	b, _ = fileDesc.Serialize(recoverySetID)
 	out.Write(b)
