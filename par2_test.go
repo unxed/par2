@@ -1,6 +1,8 @@
 package par2
 
 import (
+    "encoding/binary"
+    "crypto/md5"
 	"bytes"
 	"os"
 	"path/filepath"
@@ -182,5 +184,104 @@ func TestPAR2_CorruptPacketsTolerance(t *testing.T) {
 	_, _, _, _, err = ParsePackets(corruptedBytes)
 	if err != nil {
 		t.Fatalf("ParsePackets failed to skip corrupted packet: %v", err)
+	}
+}
+func TestPAR2_PaddedFileReconstruction(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "padded.bin")
+
+	// 1. Создаем файл некратного размера (например, 50 000 байт).
+	// При блоке 16 КБ (16384 байта) это даст 3 полных блока и 1 неполный (padded) блок размером 848 байт.
+	originalSize := int64(50000)
+	originalData := make([]byte, originalSize)
+	for i := range originalData {
+		originalData[i] = byte('X' + (i/1024)%3)
+	}
+	if err := os.WriteFile(filePath, originalData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	parBytes, err := GeneratePAR2Data(filePath, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Портим неполный (последний) блок файла на диске
+	corruptedData := make([]byte, originalSize)
+	copy(corruptedData, originalData)
+	corruptedData[49900] = 0x00 // Портим байт в хвосте
+
+	if err := os.WriteFile(filePath, corruptedData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 3. Запускаем восстановление
+	if err := RepairFile(filePath, parBytes); err != nil {
+		t.Fatalf("RepairFile failed to restore padded file: %v", err)
+	}
+
+	// 4. Сверх-параноидальная проверка:
+	// Файл должен восстановиться побитово, а его размер на диске должен остаться СТРОГО 50 000 байт.
+	// Округление блока до 16 КБ не должно было раздуть файл!
+	fi, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Size() != originalSize {
+		t.Errorf("Padding Bloat detected! Expected file size %d, got %d", originalSize, fi.Size())
+	}
+
+	repairedData, _ := os.ReadFile(filePath)
+	if !bytes.Equal(repairedData, originalData) {
+		t.Error("Reconstructed padded block data is corrupted")
+	}
+}
+
+func TestPAR2_CryptographicVerificationFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "verif_fail.bin")
+
+	originalData := make([]byte, 32*1024) // 32KB
+	for i := range originalData {
+		originalData[i] = byte('Z')
+	}
+	os.WriteFile(filePath, originalData, 0644)
+
+	parBytes, _ := GeneratePAR2Data(filePath, 50)
+
+	// Намеренно портим исходный файл
+	corruptedData := make([]byte, len(originalData))
+	copy(corruptedData, originalData)
+	corruptedData[5] = 0x11 // портим блок 0
+	os.WriteFile(filePath, corruptedData, 0644)
+
+	// Намеренно портим тело избыточного пакета восстановления в parBytes
+	corruptedPar := make([]byte, len(parBytes))
+	copy(corruptedPar, parBytes)
+
+	idx := bytes.Index(corruptedPar, TypeRecvSlice[:])
+	if idx != -1 {
+		headerStart := idx - 48
+		length := binary.LittleEndian.Uint64(corruptedPar[headerStart+8 : headerStart+16])
+		bodySize := length - 64
+		bodyStart := headerStart + 64
+
+		// 1. Вносим искажение в данные восстановления (смещение 10 от начала тела пакета)
+		corruptedPar[bodyStart+10] ^= 0x55
+
+		// 2. Пересчитываем MD5-хэш измененного тела
+		newHash := md5.Sum(corruptedPar[bodyStart : bodyStart+int(bodySize)])
+
+		// 3. Перезаписываем PacketHash в заголовке пакета на смещении 16 (размер поля 16 байт)
+		copy(corruptedPar[headerStart+16 : headerStart+32], newHash[:])
+	}
+
+	// Восстановление должно завершиться ошибкой верификации MD5,
+	// предотвращая запись битых данных Гаусса на диск!
+	err := RepairFile(filePath, corruptedPar)
+	if err == nil {
+		t.Error("expected RepairFile to fail with cryptographic verification error, but it wrote corrupted data to disk")
+	} else if !strings.Contains(err.Error(), "cryptographic verification failed") {
+		t.Errorf("expected 'cryptographic verification failed' error, got: %v", err)
 	}
 }

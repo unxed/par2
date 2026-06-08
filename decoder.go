@@ -90,12 +90,12 @@ func ParsePackets(data []byte) (*MainPacket, *FileDescPacket, *IFSCPacket, []*Re
 }
 
 func RepairFile(targetFile string, par2Data []byte) error {
-	mainPkt, _, ifsc, recvSlices, err := ParsePackets(par2Data)
+	mainPkt, fileDesc, ifsc, recvSlices, err := ParsePackets(par2Data)
 	if err != nil {
 		return err
 	}
-	if ifsc == nil || mainPkt == nil {
-		return fmt.Errorf("missing critical metadata packets (IFSC/Main)")
+	if ifsc == nil || mainPkt == nil || fileDesc == nil {
+		return fmt.Errorf("missing critical metadata packets (IFSC/Main/FileDesc)")
 	}
 
 	f, err := os.OpenFile(targetFile, os.O_RDWR, 0644)
@@ -173,11 +173,30 @@ func RepairFile(targetFile string, par2Data []byte) error {
 		}
 	}
 
+	// 4. Параноидальная проверка (Post-Repair Verification):
+	// Сверяем MD5 каждого восстановленного в памяти блока с оригинальным IFSC хэшем
+	// ДО записи на физический диск.
+	for q := 0; q < k; q++ {
+		idxMissing := missingSlices[q]
+		recalculatedMD5 := md5.Sum(bVectors[q])
+		if recalculatedMD5 != ifsc.Checksums[idxMissing].MD5 {
+			return fmt.Errorf("cryptographic verification failed: reconstructed block %d is corrupted or mathematically inconsistent", idxMissing)
+		}
+	}
+
+	// 5. Записываем восстановленные блоки обратно в файл на диске
 	for q := 0; q < k; q++ {
 		idxMissing := missingSlices[q]
 		if _, err := f.WriteAt(bVectors[q], int64(idxMissing)*int64(sliceSize)); err != nil {
 			return fmt.Errorf("failed to write repaired block %d back to disk: %w", idxMissing, err)
 		}
+	}
+
+	// 6. Устранение Zero-Padding Bloat:
+	// Обрезаем файл до исходного байтового размера, указанного в метаданных,
+	// чтобы исключить раздувание файла из-за нулевого выравнивания последнего блока.
+	if err := f.Truncate(int64(fileDesc.Length)); err != nil {
+		return fmt.Errorf("failed to truncate repaired file back to original length: %w", err)
 	}
 
 	return nil
