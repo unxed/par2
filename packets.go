@@ -24,7 +24,7 @@ type PacketHeader struct {
 }
 
 func (h *PacketHeader) WriteTo(w io.Writer) error {
-	copy(h.Magic[:], "PAR 2\x00PKT\x00")
+	copy(h.Magic[:], "PAR 2\x00PK")
 	return binary.Write(w, binary.LittleEndian, h)
 }
 

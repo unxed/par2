@@ -4,13 +4,12 @@ import (
 	"bytes"
 	"crypto/md5"
 	"encoding/binary"
-	"fmt"
 	"hash/crc32"
 	"io"
 	"os"
 	"path/filepath"
 
-	"github.com/par2/gf16"
+	"github.com/unxed/par2/gf16"
 )
 
 func addMulBlock(dst, src []byte, factor uint16) {

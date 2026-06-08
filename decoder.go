@@ -8,7 +8,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/par2/gf16"
+	"github.com/unxed/par2/gf16"
 )
 
 func ParsePackets(data []byte) (*MainPacket, *FileDescPacket, *IFSCPacket, []*RecoverySlicePacket, error) {
@@ -19,6 +19,7 @@ func ParsePackets(data []byte) (*MainPacket, *FileDescPacket, *IFSCPacket, []*Re
 	var recvSlices []*RecoverySlicePacket
 
 	for {
+		pos, _ := r.Seek(0, io.SeekCurrent)
 		var hdr PacketHeader
 		err := binary.Read(r, binary.LittleEndian, &hdr)
 		if err == io.EOF {
@@ -28,8 +29,9 @@ func ParsePackets(data []byte) (*MainPacket, *FileDescPacket, *IFSCPacket, []*Re
 			return nil, nil, nil, nil, fmt.Errorf("failed to read packet header: %w", err)
 		}
 
-		if string(hdr.Magic[:]) != "PAR 2\x00PKT\x00" {
-			return nil, nil, nil, nil, fmt.Errorf("invalid PAR2 magic signature")
+		magicStr := string(hdr.Magic[:])
+		if magicStr != "PAR 2\x00PK" {
+			return nil, nil, nil, nil, fmt.Errorf("invalid PAR2 magic signature (got %q, hex: %x) at offset %d", magicStr, hdr.Magic[:], pos)
 		}
 
 		bodyLen := hdr.Length - 64
@@ -39,7 +41,7 @@ func ParsePackets(data []byte) (*MainPacket, *FileDescPacket, *IFSCPacket, []*Re
 		}
 
 		if md5.Sum(body) != hdr.PacketHash {
-			continue
+			continue // Skip corrupted packets
 		}
 
 		br := bytes.NewReader(body)
