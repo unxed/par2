@@ -1,0 +1,182 @@
+package par2
+
+import (
+	"bytes"
+	"crypto/md5"
+	"encoding/binary"
+	"fmt"
+	"io"
+	"os"
+
+	"github.com/par2/gf16"
+)
+
+func ParsePackets(data []byte) (*MainPacket, *FileDescPacket, *IFSCPacket, []*RecoverySlicePacket, error) {
+	r := bytes.NewReader(data)
+	var mainPkt *MainPacket
+	var fileDesc *FileDescPacket
+	var ifsc *IFSCPacket
+	var recvSlices []*RecoverySlicePacket
+
+	for {
+		var hdr PacketHeader
+		err := binary.Read(r, binary.LittleEndian, &hdr)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("failed to read packet header: %w", err)
+		}
+
+		if string(hdr.Magic[:]) != "PAR 2\x00PKT\x00" {
+			return nil, nil, nil, nil, fmt.Errorf("invalid PAR2 magic signature")
+		}
+
+		bodyLen := hdr.Length - 64
+		body := make([]byte, bodyLen)
+		if _, err := io.ReadFull(r, body); err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("truncated packet body")
+		}
+
+		if md5.Sum(body) != hdr.PacketHash {
+			continue
+		}
+
+		br := bytes.NewReader(body)
+
+		switch hdr.Type {
+		case TypeMain:
+			mainPkt = &MainPacket{}
+			binary.Read(br, binary.LittleEndian, &mainPkt.SliceSize)
+			binary.Read(br, binary.LittleEndian, &mainPkt.NumFiles)
+			numIDs := (bodyLen - 12) / 16
+			mainPkt.FileIDs = make([][16]byte, numIDs)
+			for i := range mainPkt.FileIDs {
+				binary.Read(br, binary.LittleEndian, &mainPkt.FileIDs[i])
+			}
+
+		case TypeFileDesc:
+			fileDesc = &FileDescPacket{}
+			binary.Read(br, binary.LittleEndian, &fileDesc.FileID)
+			binary.Read(br, binary.LittleEndian, &fileDesc.FileHash)
+			binary.Read(br, binary.LittleEndian, &fileDesc.Hash16k)
+			binary.Read(br, binary.LittleEndian, &fileDesc.Length)
+			nameBytes := make([]byte, br.Len())
+			binary.Read(br, binary.LittleEndian, nameBytes)
+			fileDesc.Name = string(bytes.TrimRight(nameBytes, "\x00"))
+
+		case TypeIFSC:
+			ifsc = &IFSCPacket{}
+			binary.Read(br, binary.LittleEndian, &ifsc.FileID)
+			numChecksums := (bodyLen - 16) / 20
+			ifsc.Checksums = make([]SliceChecksums, numChecksums)
+			for i := range ifsc.Checksums {
+				binary.Read(br, binary.LittleEndian, &ifsc.Checksums[i].MD5)
+				binary.Read(br, binary.LittleEndian, &ifsc.Checksums[i].CRC32)
+			}
+
+		case TypeRecvSlice:
+			slice := &RecoverySlicePacket{}
+			binary.Read(br, binary.LittleEndian, &slice.Exponent)
+			slice.Data = make([]byte, br.Len())
+			binary.Read(br, binary.LittleEndian, slice.Data)
+			recvSlices = append(recvSlices, slice)
+		}
+	}
+
+	return mainPkt, fileDesc, ifsc, recvSlices, nil
+}
+
+func RepairFile(targetFile string, par2Data []byte) error {
+	mainPkt, _, ifsc, recvSlices, err := ParsePackets(par2Data)
+	if err != nil {
+		return err
+	}
+	if ifsc == nil || mainPkt == nil {
+		return fmt.Errorf("missing critical metadata packets (IFSC/Main)")
+	}
+
+	f, err := os.OpenFile(targetFile, os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	sliceSize := mainPkt.SliceSize
+	numSlices := len(ifsc.Checksums)
+
+	var missingSlices []int
+	survivingSlices := make(map[int][]byte)
+
+	for i := 0; i < numSlices; i++ {
+		buf := make([]byte, sliceSize)
+		n, _ := f.ReadAt(buf, int64(i)*int64(sliceSize))
+		_ = n
+
+		actualMD5 := md5.Sum(buf)
+		if actualMD5 != ifsc.Checksums[i].MD5 {
+			missingSlices = append(missingSlices, i)
+		} else {
+			survivingSlices[i] = buf
+		}
+	}
+
+	if len(missingSlices) == 0 {
+		return nil
+	}
+
+	if len(missingSlices) > len(recvSlices) {
+		return fmt.Errorf("not enough recovery slices to repair: need %d, have %d", len(missingSlices), len(recvSlices))
+	}
+
+	k := len(missingSlices)
+	matrix := gf16.NewMatrix(k, k)
+	bVectors := make([][]byte, k)
+	for i := range bVectors {
+		bVectors[i] = make([]byte, sliceSize)
+	}
+
+	for p := 0; p < k; p++ {
+		rP := recvSlices[p].Exponent
+		copy(bVectors[p], recvSlices[p].Data)
+
+		for idx, dataSlice := range survivingSlices {
+			exponent := (rP * uint32(idx)) % 65535
+			factor := gf16.Pow(2, int(exponent))
+			addMulBlock(bVectors[p], dataSlice, factor)
+		}
+
+		for q := 0; q < k; q++ {
+			idxMissing := missingSlices[q]
+			exponent := (rP * uint32(idxMissing)) % 65535
+			factor := gf16.Pow(2, int(exponent))
+			matrix.Set(p, q, factor)
+		}
+	}
+
+	for offset := uint64(0); offset < sliceSize; offset += 2 {
+		b := make([]uint16, k)
+		for p := 0; p < k; p++ {
+			b[p] = binary.LittleEndian.Uint16(bVectors[p][offset : offset+2])
+		}
+
+		matrixCopy := gf16.NewMatrix(k, k)
+		copy(matrixCopy.Data, matrix.Data)
+		if err := matrixCopy.Solve(b); err != nil {
+			return fmt.Errorf("reconstruction matrix is singular: %w", err)
+		}
+
+		for q := 0; q < k; q++ {
+			binary.LittleEndian.PutUint16(bVectors[q][offset:offset+2], b[q])
+		}
+	}
+
+	for q := 0; q < k; q++ {
+		idxMissing := missingSlices[q]
+		if _, err := f.WriteAt(bVectors[q], int64(idxMissing)*int64(sliceSize)); err != nil {
+			return fmt.Errorf("failed to write repaired block %d back to disk: %w", idxMissing, err)
+		}
+	}
+
+	return nil
+}
