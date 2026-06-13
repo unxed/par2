@@ -1,0 +1,17 @@
+github.com/akalin/gopar v0.0.0-20210524065929-a776223763d3 h1:riZbpH66GmEJzxox72D09gKw8YQ0DE5+GAYEtnGP1PM=
+github.com/akalin/gopar v0.0.0-20210524065929-a776223763d3/go.mod h1:aeTiuZKzgvaXXYzJqFisQwLkJrTg4eg9ihsg3qQivPs=
+github.com/danielmorsing/gonzbee v0.0.0-20170928120813-4deb2f96db05 h1:tmM1ENb3ZH4KXfDzcdXl/dmjZN6gY9zJH3tp40e+z9I=
+github.com/danielmorsing/gonzbee v0.0.0-20170928120813-4deb2f96db05/go.mod h1:/By0gd1aCX/bU4xZTGTqg4vWxhY/RqtMlgvH66IpW6w=
+github.com/davecgh/go-spew v1.1.0 h1:ZDRjVQ15GmhC3fiQ8ni8+OwkZQO4DARzQgrnXU1Liz8=
+github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+github.com/klauspost/cpuid/v2 v2.0.2 h1:pd2FBxFydtPn2ywTLStbFg9CJKrojATnpeJWSP7Ys4k=
+github.com/klauspost/cpuid/v2 v2.0.2/go.mod h1:FInQzS24/EEf25PyTYn52gqo7WaD8xa0213Md/qVLRg=
+github.com/klauspost/reedsolomon v1.9.11/go.mod h1:nLvuzNvy1ZDNQW30IuMc2ZWCbiqrJgdLoUS2X8HAUVg=
+github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
+github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
+github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
+github.com/stretchr/testify v1.7.0 h1:nwc3DEeHmmLAfoZucVR881uASk0Mfjw8xYJ99tb5CcY=
+github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
+gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
+gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c h1:dUUwHk2QECo/6vqA44rthZ8ie2QXMNeKRTHCNY2nXvo=
+gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=

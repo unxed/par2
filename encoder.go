@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"unsafe"
 
 	"github.com/unxed/par2/gf16"
 )
@@ -16,11 +17,32 @@ func addMulBlock(dst, src []byte, factor uint16) {
 	if factor == 0 {
 		return
 	}
-	for i := 0; i < len(src); i += 2 {
-		val := binary.LittleEndian.Uint16(src[i : i+2])
-		prod := gf16.Mul(val, factor)
-		orig := binary.LittleEndian.Uint16(dst[i : i+2])
-		binary.LittleEndian.PutUint16(dst[i : i+2], orig^prod)
+
+	limit := len(src) / 2
+	src16 := *(*[]uint16)(unsafe.Pointer(&src))
+	dst16 := *(*[]uint16)(unsafe.Pointer(&dst))
+
+	src16 = src16[:limit]
+	dst16 = dst16[:limit]
+
+	if factor == 1 {
+		for i := 0; i < limit; i++ {
+			dst16[i] ^= src16[i]
+		}
+		return
+	}
+
+	logFactor := int(gf16.GfLog[factor])
+	for i := 0; i < limit; i++ {
+		val := src16[i]
+		if val == 0 {
+			continue
+		}
+		logSum := int(gf16.GfLog[val]) + logFactor
+		if logSum >= 65535 {
+			logSum -= 65535
+		}
+		dst16[i] ^= gf16.GfExp[logSum]
 	}
 }
 

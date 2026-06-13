@@ -3,6 +3,7 @@ package par2
 import (
 	"bytes"
 	"crypto/md5"
+	"hash/crc32"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -125,18 +126,29 @@ func RepairTargetData(target RepairTarget, par2Data []byte) error {
 	numSlices := len(ifsc.Checksums)
 
 	var missingSlices []int
-	survivingSlices := make(map[int][]byte)
 
+	// Pass 1: Fast verification with a single reused buffer & CRC32 check
+	sharedBuf := make([]byte, sliceSize)
 	for i := 0; i < numSlices; i++ {
-		buf := make([]byte, sliceSize)
-		n, _ := target.ReadAt(buf, int64(i)*int64(sliceSize))
-		_ = n
+		_, err := target.ReadAt(sharedBuf, int64(i)*int64(sliceSize))
+		if err != nil && err != io.EOF {
+			missingSlices = append(missingSlices, i)
+			continue
+		}
 
-		actualMD5 := md5.Sum(buf)
+		// Check CRC32 first (extremely fast)
+		actualCRC := crc32.ChecksumIEEE(sharedBuf)
+		expectedCRC := binary.LittleEndian.Uint32(ifsc.Checksums[i].CRC32[:])
+
+		if actualCRC != expectedCRC {
+			missingSlices = append(missingSlices, i)
+			continue
+		}
+
+		// If CRC32 matches, verify with MD5 to prevent collision
+		actualMD5 := md5.Sum(sharedBuf)
 		if actualMD5 != ifsc.Checksums[i].MD5 {
 			missingSlices = append(missingSlices, i)
-		} else {
-			survivingSlices[i] = buf
 		}
 	}
 
@@ -146,6 +158,22 @@ func RepairTargetData(target RepairTarget, par2Data []byte) error {
 
 	if len(missingSlices) > len(recvSlices) {
 		return fmt.Errorf("not enough recovery slices to repair: need %d, have %d", len(missingSlices), len(recvSlices))
+	}
+
+	// Pass 2: Allocate buffers only for surviving slices needed for reconstruction
+	missingSet := make([]bool, numSlices)
+	for _, m := range missingSlices {
+		missingSet[m] = true
+	}
+
+	survivingSlices := make(map[int][]byte)
+	for i := 0; i < numSlices; i++ {
+		if missingSet[i] {
+			continue
+		}
+		buf := make([]byte, sliceSize)
+		_, _ = target.ReadAt(buf, int64(i)*int64(sliceSize))
+		survivingSlices[i] = buf
 	}
 
 	k := len(missingSlices)
@@ -197,7 +225,7 @@ func RepairTargetData(target RepairTarget, par2Data []byte) error {
 		idxMissing := missingSlices[q]
 		recalculatedMD5 := md5.Sum(bVectors[q])
 		if recalculatedMD5 != ifsc.Checksums[idxMissing].MD5 {
-			return fmt.Errorf("cryptographic verification failed: reconstructed block %d is corrupted or mathematically inconsistent", idxMissing)
+			return fmt.Errorf("cryptographic cryptographic verification failed: reconstructed block %d is corrupted or mathematically inconsistent", idxMissing)
 		}
 	}
 
