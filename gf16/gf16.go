@@ -37,7 +37,7 @@ func Mul(a, b uint16) uint16 {
 	}
 	logSum := int(GfLog[a]) + int(GfLog[b])
 	if logSum >= gfOrder-1 {
-		logSum -= gfOrder-1
+		logSum -= gfOrder - 1
 	}
 	return GfExp[logSum]
 }
@@ -51,7 +51,7 @@ func Div(a, b uint16) uint16 {
 	}
 	logDiff := int(GfLog[a]) - int(GfLog[b])
 	if logDiff < 0 {
-		logDiff += gfOrder-1
+		logDiff += gfOrder - 1
 	}
 	return GfExp[logDiff]
 }

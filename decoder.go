@@ -3,9 +3,9 @@ package par2
 import (
 	"bytes"
 	"crypto/md5"
-	"hash/crc32"
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"os"
 

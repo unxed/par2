@@ -1,9 +1,9 @@
 package par2
 
 import (
-    "encoding/binary"
-    "crypto/md5"
 	"bytes"
+	"crypto/md5"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,8 +79,8 @@ func TestPAR2_FullRoundtrip(t *testing.T) {
 	// 5. Сценарий 2: Портим сразу 2 блока (блок 1 на 16КБ и блок 3 на 48КБ)
 	copy(corruptedData, originalData)
 	for i := 0; i < 500; i++ {
-		corruptedData[16*1024+i] = 0xAA    // портим блок 1
-		corruptedData[48*1024+i] = 0xBB    // портим блок 3
+		corruptedData[16*1024+i] = 0xAA // портим блок 1
+		corruptedData[48*1024+i] = 0xBB // портим блок 3
 	}
 	if err := os.WriteFile(filePath, corruptedData, 0644); err != nil {
 		t.Fatal(err)
@@ -99,9 +99,9 @@ func TestPAR2_FullRoundtrip(t *testing.T) {
 	// 6. Сценарий 3: Портим 3 блока (блок 0, 1 и 2). Лимит превышен.
 	copy(corruptedData, originalData)
 	for i := 0; i < 500; i++ {
-		corruptedData[i] = 0x99            // портим блок 0
-		corruptedData[16*1024+i] = 0xAA    // портим блок 1
-		corruptedData[32*1024+i] = 0xBB    // портим блок 2
+		corruptedData[i] = 0x99         // портим блок 0
+		corruptedData[16*1024+i] = 0xAA // портим блок 1
+		corruptedData[32*1024+i] = 0xBB // портим блок 2
 	}
 	if err := os.WriteFile(filePath, corruptedData, 0644); err != nil {
 		t.Fatal(err)
@@ -273,7 +273,7 @@ func TestPAR2_CryptographicVerificationFailure(t *testing.T) {
 		newHash := md5.Sum(corruptedPar[bodyStart : bodyStart+int(bodySize)])
 
 		// 3. Перезаписываем PacketHash в заголовке пакета на смещении 16 (размер поля 16 байт)
-		copy(corruptedPar[headerStart+16 : headerStart+32], newHash[:])
+		copy(corruptedPar[headerStart+16:headerStart+32], newHash[:])
 	}
 
 	// Восстановление должно завершиться ошибкой верификации MD5,
