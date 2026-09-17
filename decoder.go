@@ -130,6 +130,14 @@ func RepairTargetData(target RepairTarget, par2Data []byte) error {
 	// Pass 1: Fast verification with a single reused buffer & CRC32 check
 	sharedBuf := make([]byte, sliceSize)
 	for i := 0; i < numSlices; i++ {
+		// The buffer is reused from slice to slice, and the last slice of a
+		// file is usually shorter than the rest: whatever the read does not
+		// reach has to be the zero padding the checksums were computed
+		// over, not the tail of the slice read before. Left as it was, a
+		// short last slice never matched its checksum, so every repair
+		// counted one more damaged slice than there was, and one with as
+		// many damaged slices as recovery slices was refused.
+		clear(sharedBuf)
 		_, err := target.ReadAt(sharedBuf, int64(i)*int64(sliceSize))
 		if err != nil && err != io.EOF {
 			missingSlices = append(missingSlices, i)
